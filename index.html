@@ -333,26 +333,10 @@
   <nav class="tab-nav">
     <button class="tab-btn active" id="tabRecord" data-view="record">記録</button>
     <button class="tab-btn" id="tabRegister" data-view="register">台の登録</button>
+    <button class="tab-btn" id="tabSettings" data-view="settings">設定</button>
   </nav>
 
   <div id="mainArea"></div>
-
-  <section class="card">
-    <h2>データの共有</h2>
-    <p class="share-note">同期コードを設定すると、同じコードを使う端末同士でデータが自動的に同期されます（Firebaseの設定が必要です）。設定しない場合は、下の「書き出す／読み込む」で手動でやり取りできます。</p>
-    <div class="form-field">
-      <label for="syncCodeInput">同期コード</label>
-      <input type="text" id="syncCodeInput" placeholder="例: syota-pachinko（空欄で解除）">
-    </div>
-    <button class="ghost-btn" id="syncEnableBtn" style="width:100%;margin-bottom:14px;">この同期コードを設定する</button>
-    <p class="share-note" style="margin-bottom:8px;">この端末に保存されているデータを書き出して、他の端末に読み込むこともできます。</p>
-    <div class="share-actions">
-      <button class="ghost-btn" id="exportBtn">書き出す</button>
-      <button class="ghost-btn" id="importBtn">読み込む</button>
-      <input type="file" id="importFile" accept="application/json" style="display:none;">
-    </div>
-    <div class="share-status" id="shareStatus"></div>
-  </section>
 
   <footer>DATA STORED LOCALLY ON THIS DEVICE ・ AUTO-DELETED AFTER 2 YEARS</footer>
 </div>
@@ -578,6 +562,10 @@ function renderStoreSelect(){
 
 function renderMain(){
   const main = document.getElementById('mainArea');
+  if(currentView === 'settings'){
+    renderSettingsView(main);
+    return;
+  }
   if(!currentStore){
     main.innerHTML = `<div class="no-store">まだ店舗が登録されていません。<br>「＋」から最初の店舗を追加してください。</div>`;
     return;
@@ -587,6 +575,28 @@ function renderMain(){
   }else{
     renderRecordView(main);
   }
+}
+
+function renderSettingsView(main){
+  main.innerHTML = `
+    <section class="card">
+      <h2>データの共有</h2>
+      <p class="share-note">同期コードを設定すると、同じコードを使う端末同士でデータが自動的に同期されます（Firebaseの設定が必要です）。設定しない場合は、下の「書き出す／読み込む」で手動でやり取りできます。</p>
+      <div class="form-field">
+        <label for="syncCodeInput">同期コード</label>
+        <input type="text" id="syncCodeInput" placeholder="例: syota-pachinko（空欄で解除）" value="${escapeHtml(getSyncCode())}">
+      </div>
+      <button class="ghost-btn" id="syncEnableBtn" style="width:100%;margin-bottom:14px;">この同期コードを設定する</button>
+      <p class="share-note" style="margin-bottom:8px;">この端末に保存されているデータを書き出して、他の端末に読み込むこともできます。</p>
+      <div class="share-actions">
+        <button class="ghost-btn" id="exportBtn">書き出す</button>
+        <button class="ghost-btn" id="importBtn">読み込む</button>
+        <input type="file" id="importFile" accept="application/json" style="display:none;">
+      </div>
+      <div class="share-status" id="shareStatus"></div>
+    </section>
+  `;
+  bindSettingsEvents();
 }
 
 function renderRegisterView(main){
@@ -967,99 +977,98 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 function showShareStatus(msg){
   const el = document.getElementById('shareStatus');
+  if(!el) return;
   el.textContent = msg;
   setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 4000);
 }
 
-document.getElementById('exportBtn').addEventListener('click', async () => {
-  const payload = JSON.stringify({
-    stores: state.stores, units: state.units, records: state.records,
-    exportedAt: new Date().toISOString()
-  }, null, 2);
-  const filename = `pachinko-data-${todayStr()}.json`;
-  try{
-    const file = new File([payload], filename, { type: 'application/json' });
-    if(navigator.canShare && navigator.canShare({ files: [file] })){
-      await navigator.share({ files: [file], title: '獲得枚数記録データ' });
-      showShareStatus('共有しました');
+function bindSettingsEvents(){
+  document.getElementById('exportBtn').addEventListener('click', async () => {
+    const payload = JSON.stringify({
+      stores: state.stores, units: state.units, records: state.records,
+      exportedAt: new Date().toISOString()
+    }, null, 2);
+    const filename = `pachinko-data-${todayStr()}.json`;
+    try{
+      const file = new File([payload], filename, { type: 'application/json' });
+      if(navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: '獲得枚数記録データ' });
+        showShareStatus('共有しました');
+        return;
+      }
+    }catch(e){
+      // fall through to download
+    }
+    const blob = new Blob([payload], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showShareStatus('書き出しました');
+  });
+
+  document.getElementById('importBtn').addEventListener('click', () => {
+    document.getElementById('importFile').click();
+  });
+
+  document.getElementById('importFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    try{
+      const text = await file.text();
+      const data = JSON.parse(text);
+      (data.stores || []).forEach(s => { if(!state.stores.includes(s)) state.stores.push(s); });
+      (data.units || []).forEach(u => { if(!state.units.some(x => x.id === u.id)) state.units.push(u); });
+      (data.records || []).forEach(r => { if(!state.records.some(x => x.id === r.id)) state.records.push(r); });
+      pruneOldRecords();
+      await save();
+      if(state.stores.length && !currentStore) currentStore = state.stores[0];
+      renderStoreSelect();
+      showShareStatus('読み込みが完了しました');
+    }catch(err){
+      showShareStatus('読み込みに失敗しました。ファイルを確認してください');
+    }
+  });
+
+  document.getElementById('syncEnableBtn').addEventListener('click', async () => {
+    const val = document.getElementById('syncCodeInput').value.trim();
+    if(!val){
+      setSyncCode('');
+      if(fbUnsub){ fbUnsub(); fbUnsub = null; }
+      showShareStatus('同期を解除しました');
       return;
     }
-  }catch(e){
-    // fall through to download
-  }
-  const blob = new Blob([payload], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  showShareStatus('書き出しました');
-});
-
-document.getElementById('importBtn').addEventListener('click', () => {
-  document.getElementById('importFile').click();
-});
-
-document.getElementById('importFile').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if(!file) return;
-  try{
-    const text = await file.text();
-    const data = JSON.parse(text);
-    (data.stores || []).forEach(s => { if(!state.stores.includes(s)) state.stores.push(s); });
-    (data.units || []).forEach(u => { if(!state.units.some(x => x.id === u.id)) state.units.push(u); });
-    (data.records || []).forEach(r => { if(!state.records.some(x => x.id === r.id)) state.records.push(r); });
-    pruneOldRecords();
-    await save();
-    if(state.stores.length && !currentStore) currentStore = state.stores[0];
-    renderStoreSelect();
-    renderMain();
-    showShareStatus('読み込みが完了しました');
-  }catch(err){
-    showShareStatus('読み込みに失敗しました。ファイルを確認してください');
-  }
-});
-
-document.getElementById('syncEnableBtn').addEventListener('click', async () => {
-  const val = document.getElementById('syncCodeInput').value.trim();
-  if(!val){
-    setSyncCode('');
-    if(fbUnsub){ fbUnsub(); fbUnsub = null; }
-    showShareStatus('同期を解除しました');
-    return;
-  }
-  if(!firebaseReady()){
-    showShareStatus('Firebase が未設定です。index.html 内の firebaseConfig を入力してください');
-    return;
-  }
-  setSyncCode(val);
-  showShareStatus('同期を確認しています…');
-  const ok = await activateSync(val);
-  if(ok){
-    renderStoreSelect();
-    renderMain();
-    showShareStatus('同期を有効にしました');
-  }else{
-    showShareStatus('同期に失敗しました。設定をご確認ください');
-  }
-});
+    if(!firebaseReady()){
+      showShareStatus('Firebase が未設定です。index.html 内の firebaseConfig を入力してください');
+      return;
+    }
+    setSyncCode(val);
+    showShareStatus('同期を確認しています…');
+    const ok = await activateSync(val);
+    if(ok){
+      renderStoreSelect();
+      showShareStatus('同期を有効にしました');
+    }else{
+      showShareStatus('同期に失敗しました。設定をご確認ください');
+    }
+  });
+}
 
 async function init(){
   await load();
   renderStoreSelect();
   renderMain();
 
-  const syncInput = document.getElementById('syncCodeInput');
   const savedCode = getSyncCode();
-  if(savedCode){
-    syncInput.value = savedCode;
-    if(firebaseReady()){
-      const ok = await activateSync(savedCode);
-      if(ok){ renderStoreSelect(); renderMain(); }
+  if(savedCode && firebaseReady()){
+    const ok = await activateSync(savedCode);
+    if(ok){
+      renderStoreSelect();
+      renderMain();
     }
   }
-
 }
 init();
 </script>
