@@ -593,7 +593,7 @@ function renderRegisterView(main){
   const units = storeUnits();
   main.innerHTML = `
     <section class="card">
-      <h2>台を登録</h2>
+      <h2>台を登録（${escapeHtml(currentStore)}）</h2>
       <div class="form-field">
         <label for="regUnitInput">台番</label>
         <input type="text" id="regUnitInput" inputmode="numeric" placeholder="例: 128">
@@ -609,7 +609,7 @@ function renderRegisterView(main){
     </section>
 
     <section>
-      <h2>登録済みの台（全${units.length}台）</h2>
+      <h2>登録済みの台（${escapeHtml(currentStore)}・全${units.length}台）</h2>
       ${units.length ? `
         <div class="unit-chips">
           ${units.map(u => `
@@ -665,7 +665,7 @@ function renderRecordView(main){
     </section>
 
     <section>
-      <h2>台を選んで記録</h2>
+      <h2>台を選んで記録（${escapeHtml(currentStore)}）</h2>
       ${quickTarget ? `
         <div class="card quick-record-card">
           <div class="qr-eyebrow">獲得枚数を記録</div>
