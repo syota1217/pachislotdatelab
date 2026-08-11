@@ -164,13 +164,16 @@
     font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; color:var(--accent);
     background:var(--surface-2); border-radius:6px; padding:6px 8px;
   }
-  .unit-chip .cm{ flex:1; min-width:0; font-size:13.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .unit-chip .cm{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .unit-chip .cm-name{ font-size:13.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .unit-chip .cm-time{ font-size:10px; color:var(--text-faint); }
   .unit-chip .cdel{
     flex:0 0 auto; width:26px; height:26px; border-radius:6px;
     display:flex; align-items:center; justify-content:center;
     color:var(--text-faint); font-size:12px; transition:all .15s ease;
   }
   .unit-chip .cdel.confirm{ background:var(--warn); color:#fff; font-size:9px; width:auto; padding:0 7px; }
+  .unit-chip .cdel.locked{ opacity:.45; font-size:13px; }
 
   .quick-record-card{
     border-color:var(--accent-dim);
@@ -186,6 +189,13 @@
   /* registration / entry form */
   .form-field{ margin-bottom:12px; }
   .form-field:last-of-type{ margin-bottom:0; }
+  .checkbox-row{
+    display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-dim);
+    margin-bottom:12px; cursor:pointer; user-select:none;
+  }
+  .checkbox-row input[type="checkbox"]{
+    width:17px; height:17px; accent-color:var(--accent); cursor:pointer;
+  }
   label{ font-size:11px; color:var(--text-dim); display:block; margin-bottom:5px; letter-spacing:.02em; }
   .sign-toggle{ display:flex; gap:8px; margin-bottom:10px; }
   .sign-btn{
@@ -322,11 +332,6 @@
     <h2>店舗</h2>
     <div class="store-row">
       <select id="storeSelect"></select>
-      <div class="icon-btn" id="addStoreToggle" title="店舗を追加">＋</div>
-    </div>
-    <div class="add-store-row" id="addStoreRow">
-      <input type="text" id="newStoreInput" placeholder="店舗名を入力">
-      <div class="icon-btn" id="confirmAddStore">✓</div>
     </div>
   </section>
 
@@ -356,6 +361,16 @@ let pendingDelete = null;
 let pendingUnitDelete = null;
 let quickTarget = null;
 let quickSign = 'plus';
+
+const ADMIN_PW_KEY = 'pachinko-admin-pw';
+let adminUnlocked = false;
+
+function getAdminPassword(){
+  return localStorage.getItem(ADMIN_PW_KEY) || '';
+}
+function setAdminPasswordValue(pw){
+  localStorage.setItem(ADMIN_PW_KEY, pw);
+}
 
 // ---- Firebase (optional realtime sync between devices) ----
 // 1. Create a project at https://console.firebase.google.com
@@ -451,6 +466,28 @@ function fmtDiff(n){
   return Math.round(Math.abs(Number(n))).toLocaleString();
 }
 function diffClass(n){ return n > 0 ? 'pos' : (n < 0 ? 'neg' : 'zero'); }
+function lastRecordTime(machine, unit){
+  let latest = 0;
+  storeRecords().forEach(r => {
+    if(r.machine === machine && r.unit === unit && r.createdAt > latest) latest = r.createdAt;
+  });
+  return latest || null;
+}
+function relativeTime(ts){
+  if(!ts) return null;
+  const diffMs = Date.now() - ts;
+  const diffMin = Math.floor(diffMs / 60000);
+  if(diffMin < 1) return 'たった今';
+  if(diffMin < 60) return `${diffMin}分前`;
+  const diffHour = Math.floor(diffMin / 60);
+  if(diffHour < 24) return `${diffHour}時間前`;
+  const diffDay = Math.floor(diffHour / 24);
+  if(diffDay < 30) return `${diffDay}日前`;
+  const diffMonth = Math.floor(diffDay / 30);
+  if(diffMonth < 12) return `${diffMonth}ヶ月前`;
+  const diffYear = Math.floor(diffDay / 365);
+  return `${diffYear}年前`;
+}
 function fmtDateJP(dateStr){
   const [y,m,d] = dateStr.split('-').map(Number);
   const dt = new Date(y, m-1, d);
@@ -577,8 +614,54 @@ function renderMain(){
   }
 }
 
+function renderAdminCard(){
+  const hasPw = !!getAdminPassword();
+  if(!hasPw){
+    return `
+      <section class="card">
+        <h2>管理者メニュー</h2>
+        <p class="share-note">店舗の追加や台の削除を行うには、まず管理者パスワードを設定してください。</p>
+        <div class="form-field">
+          <label for="adminSetPwInput">新しいパスワード</label>
+          <input type="password" id="adminSetPwInput" placeholder="パスワードを入力">
+        </div>
+        <button class="ghost-btn" id="adminSetPwBtn" style="width:100%;">パスワードを設定する</button>
+        <div class="share-status" id="adminStatus"></div>
+      </section>
+    `;
+  }
+  if(!adminUnlocked){
+    return `
+      <section class="card">
+        <h2>管理者メニュー</h2>
+        <p class="share-note">店舗の追加・台の削除を行うには、パスワードを入力してロックを解除してください。</p>
+        <div class="form-field">
+          <label for="adminUnlockInput">パスワード</label>
+          <input type="password" id="adminUnlockInput" placeholder="パスワードを入力">
+        </div>
+        <button class="ghost-btn" id="adminUnlockBtn" style="width:100%;">ロックを解除する</button>
+        <div class="share-status" id="adminStatus"></div>
+      </section>
+    `;
+  }
+  return `
+    <section class="card">
+      <h2>管理者メニュー</h2>
+      <p class="share-note">ロック解除中です。店舗の追加ができます。「台の登録」タブでは台の削除も行えます。</p>
+      <div class="form-field">
+        <label for="adminNewStoreInput">新しい店舗名</label>
+        <input type="text" id="adminNewStoreInput" placeholder="店舗名を入力">
+      </div>
+      <button class="ghost-btn" id="adminAddStoreBtn" style="width:100%;margin-bottom:10px;">店舗を追加する</button>
+      <button class="ghost-btn" id="adminLockBtn" style="width:100%;">管理者メニューをロックする</button>
+      <div class="share-status" id="adminStatus"></div>
+    </section>
+  `;
+}
+
 function renderSettingsView(main){
   main.innerHTML = `
+    ${renderAdminCard()}
     <section class="card">
       <h2>データの共有</h2>
       <p class="share-note">同期コードを設定すると、同じコードを使う端末同士でデータが自動的に同期されます（Firebaseの設定が必要です）。設定しない場合は、下の「書き出す／読み込む」で手動でやり取りできます。</p>
@@ -597,6 +680,7 @@ function renderSettingsView(main){
     </section>
   `;
   bindSettingsEvents();
+  bindAdminEvents();
 }
 
 function renderRegisterView(main){
@@ -605,8 +689,16 @@ function renderRegisterView(main){
     <section class="card">
       <h2>台を登録（${escapeHtml(currentStore)}）</h2>
       <div class="form-field">
-        <label for="regUnitInput">台番</label>
+        <label for="regUnitInput" id="regUnitLabel">台番</label>
         <input type="text" id="regUnitInput" inputmode="numeric" placeholder="例: 128">
+      </div>
+      <label class="checkbox-row" for="rangeToggle">
+        <input type="checkbox" id="rangeToggle">
+        <span>範囲で登録する（例: 2050〜2060をまとめて登録）</span>
+      </label>
+      <div class="form-field" id="rangeEndField" style="display:none;">
+        <label for="regUnitEndInput">終了台番</label>
+        <input type="text" id="regUnitEndInput" inputmode="numeric" placeholder="例: 2060">
       </div>
       <div class="form-field">
         <label for="regMachineInput">機種</label>
@@ -625,8 +717,13 @@ function renderRegisterView(main){
           ${units.map(u => `
             <div class="unit-chip static" data-id="${u.id}">
               <span class="cu">${escapeHtml(u.unit || '-')}</span>
-              <span class="cm">${escapeHtml(u.machine)}</span>
-              <span class="cdel" data-del="${u.id}">✕</span>
+              <span class="cm">
+                <span class="cm-name">${escapeHtml(u.machine)}</span>
+                ${relativeTime(lastRecordTime(u.machine, u.unit)) ? `<span class="cm-time">最終更新: ${relativeTime(lastRecordTime(u.machine, u.unit))}</span>` : ''}
+              </span>
+              ${adminUnlocked
+                ? `<span class="cdel" data-del="${u.id}">✕</span>`
+                : `<span class="cdel locked" title="管理者メニューでロックを解除してください">🔒</span>`}
             </div>
           `).join('')}
         </div>
@@ -699,7 +796,10 @@ function renderRecordView(main){
           ${units.map(u => `
             <div class="unit-chip" data-id="${u.id}">
               <span class="cu">${escapeHtml(u.unit || '-')}</span>
-              <span class="cm">${escapeHtml(u.machine)}</span>
+              <span class="cm">
+                <span class="cm-name">${escapeHtml(u.machine)}</span>
+                ${relativeTime(lastRecordTime(u.machine, u.unit)) ? `<span class="cm-time">最終更新: ${relativeTime(lastRecordTime(u.machine, u.unit))}</span>` : ''}
+              </span>
             </div>
           `).join('')}
         </div>
@@ -783,7 +883,22 @@ function bindRegisterEvents(){
   const regMachineInput = document.getElementById('regMachineInput');
   if(regMachineInput) regMachineInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') handleRegisterUnit(); });
 
-  document.querySelectorAll('.cdel').forEach(el => {
+  const rangeToggle = document.getElementById('rangeToggle');
+  const rangeEndField = document.getElementById('rangeEndField');
+  const regUnitLabel = document.getElementById('regUnitLabel');
+  const regUnitEndInput = document.getElementById('regUnitEndInput');
+  if(rangeToggle){
+    rangeToggle.addEventListener('change', () => {
+      const on = rangeToggle.checked;
+      rangeEndField.style.display = on ? '' : 'none';
+      regUnitLabel.textContent = on ? '開始台番' : '台番';
+      addBtn.textContent = on ? 'この範囲をまとめて登録する' : 'この台を登録する';
+      if(on) regUnitEndInput.focus();
+    });
+  }
+  if(regUnitEndInput) regUnitEndInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') handleRegisterUnit(); });
+
+  document.querySelectorAll('.cdel[data-del]').forEach(el => {
     el.onclick = () => handleUnitDeleteClick(el);
   });
 }
@@ -839,7 +954,11 @@ function bindRecordEvents(){
 
 async function handleRegisterUnit(){
   const unitInput = document.getElementById('regUnitInput');
+  const endInput = document.getElementById('regUnitEndInput');
   const machineInput = document.getElementById('regMachineInput');
+  const rangeToggle = document.getElementById('rangeToggle');
+  const isRange = !!(rangeToggle && rangeToggle.checked);
+
   const unit = unitInput.value.trim();
   const machine = machineInput.value.trim();
 
@@ -848,6 +967,43 @@ async function handleRegisterUnit(){
     setTimeout(() => { machineInput.style.borderColor = ''; }, 700);
     return;
   }
+
+  if(isRange){
+    const endRaw = endInput.value.trim();
+    const startNum = Number(unit);
+    const endNum = Number(endRaw);
+    const invalid = unit === '' || endRaw === '' || Number.isNaN(startNum) || Number.isNaN(endNum);
+    if(invalid){
+      [unitInput, endInput].forEach(el => {
+        el.style.borderColor = 'var(--warn)';
+        setTimeout(() => { el.style.borderColor = ''; }, 700);
+      });
+      return;
+    }
+    const lo = Math.min(startNum, endNum);
+    const hi = Math.max(startNum, endNum);
+    if(hi - lo + 1 > 500){
+      endInput.style.borderColor = 'var(--warn)';
+      setTimeout(() => { endInput.style.borderColor = ''; }, 700);
+      return;
+    }
+    let addedCount = 0;
+    for(let n = lo; n <= hi; n++){
+      const unitStr = String(n);
+      const exists = storeUnits().some(u => u.unit === unitStr && u.machine === machine);
+      if(!exists){
+        state.units.push({ id: uid(), store: currentStore, unit: unitStr, machine, createdAt: Date.now() });
+        addedCount++;
+      }
+    }
+    if(addedCount > 0) await save();
+    unitInput.value = '';
+    endInput.value = '';
+    machineInput.value = '';
+    renderMain();
+    return;
+  }
+
   const exists = storeUnits().some(u => u.unit === unit && u.machine === machine);
   if(!exists){
     state.units.push({ id: uid(), store: currentStore, unit, machine, createdAt: Date.now() });
@@ -941,17 +1097,9 @@ document.getElementById('storeSelect').addEventListener('change', (e) => {
   renderMain();
 });
 
-document.getElementById('addStoreToggle').addEventListener('click', () => {
-  const row = document.getElementById('addStoreRow');
-  row.classList.toggle('show');
-  if(row.classList.contains('show')) document.getElementById('newStoreInput').focus();
-});
-
-document.getElementById('confirmAddStore').addEventListener('click', addStore);
-document.getElementById('newStoreInput').addEventListener('keydown', (e) => { if(e.key === 'Enter') addStore(); });
-
 async function addStore(){
-  const input = document.getElementById('newStoreInput');
+  const input = document.getElementById('adminNewStoreInput');
+  if(!input) return;
   const name = input.value.trim();
   if(!name) return;
   if(!state.stores.includes(name)){
@@ -960,9 +1108,58 @@ async function addStore(){
   }
   currentStore = name;
   input.value = '';
-  document.getElementById('addStoreRow').classList.remove('show');
   renderStoreSelect();
-  renderMain();
+  showAdminStatus('店舗を追加しました');
+}
+
+function showAdminStatus(msg){
+  const el = document.getElementById('adminStatus');
+  if(!el) return;
+  el.textContent = msg;
+  setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 4000);
+}
+
+function bindAdminEvents(){
+  const setPwBtn = document.getElementById('adminSetPwBtn');
+  if(setPwBtn){
+    setPwBtn.onclick = () => {
+      const input = document.getElementById('adminSetPwInput');
+      const pw = input.value;
+      if(!pw){
+        input.style.borderColor = 'var(--warn)';
+        setTimeout(() => { input.style.borderColor = ''; }, 700);
+        return;
+      }
+      setAdminPasswordValue(pw);
+      adminUnlocked = true;
+      renderMain();
+    };
+  }
+
+  const unlockBtn = document.getElementById('adminUnlockBtn');
+  const unlockInput = document.getElementById('adminUnlockInput');
+  if(unlockBtn){
+    unlockBtn.onclick = () => {
+      const val = unlockInput.value;
+      if(val && val === getAdminPassword()){
+        adminUnlocked = true;
+        renderMain();
+      }else{
+        unlockInput.style.borderColor = 'var(--warn)';
+        setTimeout(() => { unlockInput.style.borderColor = ''; }, 700);
+        showAdminStatus('パスワードが違います');
+      }
+    };
+  }
+  if(unlockInput) unlockInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') unlockBtn.click(); });
+
+  const lockBtn = document.getElementById('adminLockBtn');
+  if(lockBtn) lockBtn.onclick = () => { adminUnlocked = false; renderMain(); };
+
+  const addStoreBtn = document.getElementById('adminAddStoreBtn');
+  if(addStoreBtn) addStoreBtn.onclick = addStore;
+  const newStoreInput = document.getElementById('adminNewStoreInput');
+  if(newStoreInput) newStoreInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') addStore(); });
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
