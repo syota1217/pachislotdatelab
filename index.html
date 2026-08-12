@@ -177,10 +177,23 @@
   .unit-chip .cdel.confirm{ background:var(--warn); color:#fff; font-size:9px; width:auto; padding:0 7px; }
   .unit-chip .cdel.locked{ opacity:.45; font-size:13px; }
 
+  .quick-record-backdrop{
+    position:fixed; inset:0; background:rgba(8,10,14,0.6); z-index:55;
+    animation:fadeIn .15s ease;
+  }
+  .quick-record-overlay{
+    position:fixed; left:0; right:0; bottom:0; z-index:60;
+    display:flex; justify-content:center;
+    padding:12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+    animation:slideUp .18s ease;
+  }
+  @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
+  @keyframes slideUp{ from{ transform:translateY(16px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
   .quick-record-card{
+    width:100%; max-width:608px;
     border-color:var(--accent-dim);
-    background:linear-gradient(180deg, rgba(231,180,75,0.07), var(--surface));
-    margin-bottom:10px;
+    background:var(--surface);
+    box-shadow:0 -10px 32px rgba(0,0,0,0.5);
   }
   .qr-eyebrow{ font-size:10px; color:var(--text-faint); letter-spacing:.05em; margin-bottom:3px; }
   .qr-title{ font-size:15px; font-weight:700; margin-bottom:12px; }
@@ -764,7 +777,24 @@ function renderRecordView(main){
 
     <section>
       <h2>台を選んで記録（${escapeHtml(currentStore)}）</h2>
-      ${quickTarget ? `
+      ${pendingUnits.length ? `
+        <div class="unit-chips">
+          ${pendingUnits.map(u => `
+            <div class="unit-chip" data-id="${u.id}">
+              <span class="cu">${escapeHtml(u.unit || '-')}</span>
+              <span class="cm">
+                <span class="cm-name">${escapeHtml(u.machine)}</span>
+                ${relativeTime(lastRecordTime(u.machine, u.unit)) ? `<span class="cm-time">最終更新: ${relativeTime(lastRecordTime(u.machine, u.unit))}</span>` : ''}
+              </span>
+            </div>
+          `).join('')}
+        </div>
+      ` : units.length ? `<div class="empty">本日の記録はすべて完了しています</div>` : `<div class="empty">台が登録されていません。「台の登録」タブから追加してください</div>`}
+    </section>
+
+    ${quickTarget ? `
+      <div class="quick-record-backdrop" id="quickBackdrop"></div>
+      <div class="quick-record-overlay">
         <div class="card quick-record-card">
           <div class="qr-eyebrow">獲得枚数を記録</div>
           <div class="qr-title"><span class="qu">${escapeHtml(quickTarget.unit || '-')}</span>${escapeHtml(quickTarget.machine)}</div>
@@ -781,21 +811,8 @@ function renderRecordView(main){
             <div class="icon-btn" id="quickCancelBtn">✕</div>
           </div>
         </div>
-      ` : ''}
-      ${pendingUnits.length ? `
-        <div class="unit-chips">
-          ${pendingUnits.map(u => `
-            <div class="unit-chip" data-id="${u.id}">
-              <span class="cu">${escapeHtml(u.unit || '-')}</span>
-              <span class="cm">
-                <span class="cm-name">${escapeHtml(u.machine)}</span>
-                ${relativeTime(lastRecordTime(u.machine, u.unit)) ? `<span class="cm-time">最終更新: ${relativeTime(lastRecordTime(u.machine, u.unit))}</span>` : ''}
-              </span>
-            </div>
-          `).join('')}
-        </div>
-      ` : units.length ? `<div class="empty">本日の記録はすべて完了しています</div>` : `<div class="empty">台が登録されていません。「台の登録」タブから追加してください</div>`}
-    </section>
+      </div>
+    ` : ''}
   `;
 
   bindRecordInputEvents();
@@ -950,6 +967,9 @@ function bindDateNavEvents(){
 
 function bindRecordInputEvents(){
   bindDateNavEvents();
+
+  const quickBackdrop = document.getElementById('quickBackdrop');
+  if(quickBackdrop) quickBackdrop.onclick = () => { quickTarget = null; renderMain(); };
 
   document.querySelectorAll('.unit-chip').forEach(el => {
     el.onclick = () => openQuickRecord(el.dataset.id);
