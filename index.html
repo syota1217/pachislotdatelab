@@ -743,7 +743,10 @@ function renderRecordView(main){
   const dj = fmtDateJP(currentDate);
   const units = storeUnits();
   const recordedToday = new Set(dayRecords().map(r => `${r.unit}__${r.machine}`));
-  const pendingUnits = units.filter(u => !recordedToday.has(`${u.unit}__${u.machine}`));
+  const pendingUnits = units
+    .filter(u => !recordedToday.has(`${u.unit}__${u.machine}`))
+    .slice()
+    .sort((a,b) => compareUnits(a.unit || '', b.unit || ''));
 
   main.innerHTML = `
     <section class="date-nav-section">
