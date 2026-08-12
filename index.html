@@ -115,10 +115,12 @@
 
   /* tabs */
   .tab-nav{ display:flex; gap:8px; margin-top:16px; }
+  .tab-nav{ flex-wrap:wrap; }
   .tab-btn{
-    flex:1; height:44px; border-radius:9px; border:1px solid var(--border);
+    flex:1; min-width:0; height:42px; border-radius:9px; border:1px solid var(--border);
     background:var(--surface); color:var(--text-dim);
-    font-family:'Zen Kaku Gothic New',sans-serif; font-weight:700; font-size:13.5px;
+    font-family:'Zen Kaku Gothic New',sans-serif; font-weight:700; font-size:12px;
+    padding:0 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     cursor:pointer; transition:all .15s ease;
   }
   .tab-btn.active{
@@ -277,6 +279,7 @@
     transition:all .15s ease;
   }
   .del-btn.confirm{ background:var(--warn); border-color:var(--warn); color:#fff; font-size:10px; width:auto; padding:0 8px; }
+  .del-btn.locked{ opacity:.45; cursor:default; }
 
   .empty{
     padding:28px 16px; text-align:center; color:var(--text-faint); font-size:12.5px;
@@ -337,6 +340,7 @@
 
   <nav class="tab-nav">
     <button class="tab-btn active" id="tabRecord" data-view="record">記録</button>
+    <button class="tab-btn" id="tabRecordsList" data-view="records">記録一覧</button>
     <button class="tab-btn" id="tabRegister" data-view="register">台の登録</button>
     <button class="tab-btn" id="tabSettings" data-view="settings">設定</button>
   </nav>
@@ -604,11 +608,13 @@ function renderMain(){
     return;
   }
   if(!currentStore){
-    main.innerHTML = `<div class="no-store">まだ店舗が登録されていません。<br>「＋」から最初の店舗を追加してください。</div>`;
+    main.innerHTML = `<div class="no-store">まだ店舗が登録されていません。<br>「設定」タブの管理者メニューから店舗を追加してください。</div>`;
     return;
   }
   if(currentView === 'register'){
     renderRegisterView(main);
+  }else if(currentView === 'records'){
+    renderRecordsListView(main);
   }else{
     renderRecordView(main);
   }
@@ -735,27 +741,9 @@ function renderRegisterView(main){
 
 function renderRecordView(main){
   const dj = fmtDateJP(currentDate);
-  const entries = dayRecords();
   const units = storeUnits();
-
-  // machine averages for the day (calculated on unsigned magnitudes)
-  const groups = {};
-  entries.forEach(r => {
-    if(!groups[r.machine]) groups[r.machine] = [];
-    groups[r.machine].push(Math.abs(r.diff));
-  });
-  const machineStats = Object.keys(groups).map(name => {
-    const vals = groups[name];
-    const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
-    return { name, avg, count: vals.length, max: Math.max(...vals), min: Math.min(...vals) };
-  }).sort((a,b) => b.avg - a.avg);
-
-  const groupedEntries = groupSortEntries(entries);
-
-  // history: dates with counts for this store
-  const byDate = {};
-  storeRecords().forEach(r => { byDate[r.date] = (byDate[r.date]||0) + 1; });
-  const dates = Object.keys(byDate).sort().reverse();
+  const recordedToday = new Set(dayRecords().map(r => `${r.unit}__${r.machine}`));
+  const pendingUnits = units.filter(u => !recordedToday.has(`${u.unit}__${u.machine}`));
 
   main.innerHTML = `
     <section class="date-nav-section">
@@ -791,9 +779,9 @@ function renderRecordView(main){
           </div>
         </div>
       ` : ''}
-      ${units.length ? `
+      ${pendingUnits.length ? `
         <div class="unit-chips">
-          ${units.map(u => `
+          ${pendingUnits.map(u => `
             <div class="unit-chip" data-id="${u.id}">
               <span class="cu">${escapeHtml(u.unit || '-')}</span>
               <span class="cm">
@@ -803,7 +791,48 @@ function renderRecordView(main){
             </div>
           `).join('')}
         </div>
-      ` : `<div class="empty">台が登録されていません。「台の登録」タブから追加してください</div>`}
+      ` : units.length ? `<div class="empty">本日の記録はすべて完了しています</div>` : `<div class="empty">台が登録されていません。「台の登録」タブから追加してください</div>`}
+    </section>
+  `;
+
+  bindRecordInputEvents();
+}
+
+function renderRecordsListView(main){
+  const dj = fmtDateJP(currentDate);
+  const entries = dayRecords();
+
+  // machine averages for the day (calculated on unsigned magnitudes)
+  const groups = {};
+  entries.forEach(r => {
+    if(!groups[r.machine]) groups[r.machine] = [];
+    groups[r.machine].push(Math.abs(r.diff));
+  });
+  const machineStats = Object.keys(groups).map(name => {
+    const vals = groups[name];
+    const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
+    return { name, avg, count: vals.length, max: Math.max(...vals), min: Math.min(...vals) };
+  }).sort((a,b) => b.avg - a.avg);
+
+  const groupedEntries = groupSortEntries(entries);
+
+  // history: dates with counts for this store
+  const byDate = {};
+  storeRecords().forEach(r => { byDate[r.date] = (byDate[r.date]||0) + 1; });
+  const dates = Object.keys(byDate).sort().reverse();
+
+  main.innerHTML = `
+    <section class="date-nav-section">
+      <h2>記録日</h2>
+      <div class="date-nav">
+        <div class="icon-btn" id="prevDay">‹</div>
+        <div class="date-display">
+          <div class="d">${dj.main}<span class="w">${dj.week}</span></div>
+          <input type="date" id="datePicker" value="${currentDate}">
+        </div>
+        <div class="icon-btn" id="nextDay">›</div>
+      </div>
+      ${currentDate !== todayStr() ? `<div class="today-btn" id="gotoToday" style="margin-top:8px;width:100%;">今日に戻る</div>` : ''}
     </section>
 
     <section>
@@ -842,7 +871,9 @@ function renderRecordView(main){
                 </div>
                 <div class="mid"></div>
                 <div class="diff num ${diffClass(r.diff)}">${fmtDiff(r.diff)}</div>
-                <div class="del-btn" data-id="${r.id}">✕</div>
+                ${adminUnlocked
+                  ? `<div class="del-btn" data-id="${r.id}">✕</div>`
+                  : `<div class="del-btn locked" title="管理者メニューでロックを解除してください">🔒</div>`}
               </div>
             `).join('')}
           </div>
@@ -867,7 +898,7 @@ function renderRecordView(main){
     </section>
   `;
 
-  bindRecordEvents();
+  bindRecordsListEvents();
 }
 
 function escapeHtml(str){
@@ -903,7 +934,7 @@ function bindRegisterEvents(){
   });
 }
 
-function bindRecordEvents(){
+function bindDateNavEvents(){
   const prev = document.getElementById('prevDay');
   const next = document.getElementById('nextDay');
   const picker = document.getElementById('datePicker');
@@ -912,17 +943,10 @@ function bindRecordEvents(){
   if(next) next.onclick = () => { currentDate = addDays(currentDate, 1); openHistory=false; quickTarget=null; renderMain(); };
   if(picker) picker.onchange = (e) => { currentDate = e.target.value; openHistory=false; quickTarget=null; renderMain(); };
   if(gotoToday) gotoToday.onclick = () => { currentDate = todayStr(); openHistory=false; quickTarget=null; renderMain(); };
+}
 
-  const histToggle = document.getElementById('historyToggle');
-  if(histToggle) histToggle.onclick = () => { openHistory = !openHistory; renderMain(); };
-
-  document.querySelectorAll('.history-item').forEach(el => {
-    el.onclick = () => { currentDate = el.dataset.date; renderMain(); };
-  });
-
-  document.querySelectorAll('.del-btn').forEach(el => {
-    el.onclick = () => handleDeleteClick(el);
-  });
+function bindRecordInputEvents(){
+  bindDateNavEvents();
 
   document.querySelectorAll('.unit-chip').forEach(el => {
     el.onclick = () => openQuickRecord(el.dataset.id);
@@ -947,9 +971,23 @@ function bindRecordEvents(){
 
   const quickAmountInput = document.getElementById('quickAmountInput');
   if(quickAmountInput){
-    quickAmountInput.focus();
     quickAmountInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') handleQuickSubmit(); });
   }
+}
+
+function bindRecordsListEvents(){
+  bindDateNavEvents();
+
+  const histToggle = document.getElementById('historyToggle');
+  if(histToggle) histToggle.onclick = () => { openHistory = !openHistory; renderMain(); };
+
+  document.querySelectorAll('.history-item').forEach(el => {
+    el.onclick = () => { currentDate = el.dataset.date; renderMain(); };
+  });
+
+  document.querySelectorAll('.del-btn[data-id]').forEach(el => {
+    el.onclick = () => handleDeleteClick(el);
+  });
 }
 
 async function handleRegisterUnit(){
