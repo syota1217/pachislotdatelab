@@ -186,6 +186,7 @@
     display:flex; justify-content:center;
     padding:12px 16px calc(14px + env(safe-area-inset-bottom, 0px));
     animation:slideUp .18s ease;
+    transition:bottom .12s ease;
   }
   @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
   @keyframes slideUp{ from{ transform:translateY(16px); opacity:0; } to{ transform:translateY(0); opacity:1; } }
@@ -221,6 +222,16 @@
   }
   .sign-btn.plus.active{ background:rgba(183,217,76,0.14); border-color:var(--pos); color:var(--pos); }
   .sign-btn.minus.active{ background:rgba(226,104,90,0.14); border-color:var(--neg); color:var(--neg); }
+  .scope-toggle{ display:flex; gap:8px; margin-bottom:12px; }
+  .scope-btn{
+    flex:1; height:40px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text-dim);
+    font-family:'Zen Kaku Gothic New',sans-serif; font-weight:700; font-size:13px;
+    cursor:pointer; transition:all .15s ease;
+  }
+  .scope-btn.active{ background:rgba(231,180,75,0.14); border-color:var(--accent); color:var(--accent); }
+  .range-date-row{ display:flex; gap:10px; margin-bottom:12px; }
+  .range-date-row .form-field{ flex:1; margin-bottom:0; }
   .diff-input-wrap{ position:relative; }
   .diff-input-wrap input{
     font-family:'JetBrains Mono',monospace; font-weight:700;
@@ -381,6 +392,10 @@ let quickSign = 'plus';
 
 const ADMIN_PW_KEY = 'pachinko-admin-pw';
 let adminUnlocked = false;
+let digitScopeMode = 'day';
+let digitRangeStart = null;
+let digitRangeEnd = null;
+let digitMachineFilter = '';
 
 function getAdminPassword(){
   return localStorage.getItem(ADMIN_PW_KEY) || '';
@@ -593,6 +608,41 @@ function groupSortEntries(entries){
       machine: name,
       items: groups[name].slice().sort((a,b) => compareUnits(a.unit || '', b.unit || ''))
     }));
+}
+
+function digitScopeRecords(){
+  let records;
+  if(digitScopeMode === 'day'){
+    records = dayRecords();
+  }else{
+    const a = digitRangeStart || todayStr();
+    const b = digitRangeEnd || todayStr();
+    const lo = a <= b ? a : b;
+    const hi = a <= b ? b : a;
+    records = storeRecords().filter(r => r.date >= lo && r.date <= hi);
+  }
+  if(digitMachineFilter) records = records.filter(r => r.machine === digitMachineFilter);
+  return records;
+}
+function computeDigitStats(records){
+  const groups = {};
+  records.forEach(r => {
+    const n = Number(r.unit);
+    if(r.unit === '' || r.unit == null || Number.isNaN(n)) return;
+    const digit = Math.abs(Math.trunc(n)) % 10;
+    if(!groups[digit]) groups[digit] = [];
+    groups[digit].push(r);
+  });
+  return Object.keys(groups)
+    .map(Number)
+    .sort((a,b) => a - b)
+    .map(digit => {
+      const recs = groups[digit];
+      const vals = recs.map(r => Math.abs(r.diff));
+      const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
+      const plusCount = recs.filter(r => r.diff > 0).length;
+      return { digit, count: recs.length, avg, plusCount };
+    });
 }
 
 function renderStoreSelect(){
@@ -822,6 +872,9 @@ function renderRecordsListView(main){
   const dj = fmtDateJP(currentDate);
   const entries = dayRecords();
 
+  if(!digitRangeEnd) digitRangeEnd = currentDate;
+  if(!digitRangeStart) digitRangeStart = addDays(currentDate, -6);
+
   // machine averages for the day (calculated on unsigned magnitudes)
   const groups = {};
   entries.forEach(r => {
@@ -833,6 +886,8 @@ function renderRecordsListView(main){
     const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
     return { name, avg, count: vals.length, max: Math.max(...vals), min: Math.min(...vals) };
   }).sort((a,b) => b.avg - a.avg);
+
+  const digitStats = computeDigitStats(digitScopeRecords());
 
   const groupedEntries = groupSortEntries(entries);
 
@@ -869,6 +924,44 @@ function renderRecordsListView(main){
           `).join('')}
         </div>
       ` : `<div class="empty">この日の記録がまだありません</div>`}
+    </section>
+
+    <section>
+      <h2>台番 一の位別データ</h2>
+      <div class="scope-toggle">
+        <button type="button" class="scope-btn ${digitScopeMode === 'day' ? 'active' : ''}" data-scope="day">当日</button>
+        <button type="button" class="scope-btn ${digitScopeMode === 'range' ? 'active' : ''}" data-scope="range">期間指定</button>
+      </div>
+      ${digitScopeMode === 'range' ? `
+        <div class="range-date-row">
+          <div class="form-field">
+            <label for="digitRangeStartInput">開始日</label>
+            <input type="date" id="digitRangeStartInput" value="${digitRangeStart}">
+          </div>
+          <div class="form-field">
+            <label for="digitRangeEndInput">終了日</label>
+            <input type="date" id="digitRangeEndInput" value="${digitRangeEnd}">
+          </div>
+        </div>
+      ` : ''}
+      <div class="form-field">
+        <label for="digitMachineFilterSelect">機種で絞り込む</label>
+        <select id="digitMachineFilterSelect">
+          <option value="">すべての機種</option>
+          ${machineList().map(m => `<option value="${escapeHtml(m)}" ${digitMachineFilter === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+        </select>
+      </div>
+      ${digitStats.length ? `
+        <div class="summary-grid">
+          ${digitStats.map(d => `
+            <div class="machine-card">
+              <div class="mname">末尾 ${d.digit}</div>
+              <div class="mcount">${d.count}件 ・ プラス${d.plusCount}件</div>
+              <div class="mavg num amt">${fmtDiff(d.avg)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : `<div class="empty">対象期間に台番付きの記録がありません</div>`}
     </section>
 
     <section>
@@ -996,6 +1089,8 @@ function bindRecordInputEvents(){
   if(quickAmountInput){
     quickAmountInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') handleQuickSubmit(); });
   }
+
+  adjustQuickSheetForKeyboard();
 }
 
 function bindRecordsListEvents(){
@@ -1011,6 +1106,18 @@ function bindRecordsListEvents(){
   document.querySelectorAll('.del-btn[data-id]').forEach(el => {
     el.onclick = () => handleDeleteClick(el);
   });
+
+  document.querySelectorAll('.scope-btn').forEach(el => {
+    el.onclick = () => { digitScopeMode = el.dataset.scope; renderMain(); };
+  });
+
+  const rangeStartInput = document.getElementById('digitRangeStartInput');
+  const rangeEndInput = document.getElementById('digitRangeEndInput');
+  if(rangeStartInput) rangeStartInput.onchange = (e) => { digitRangeStart = e.target.value; renderMain(); };
+  if(rangeEndInput) rangeEndInput.onchange = (e) => { digitRangeEnd = e.target.value; renderMain(); };
+
+  const digitMachineFilterSelect = document.getElementById('digitMachineFilterSelect');
+  if(digitMachineFilterSelect) digitMachineFilterSelect.onchange = (e) => { digitMachineFilter = e.target.value; renderMain(); };
 }
 
 async function handleRegisterUnit(){
@@ -1312,6 +1419,18 @@ function bindSettingsEvents(){
       showShareStatus('同期に失敗しました。設定をご確認ください');
     }
   });
+}
+
+function adjustQuickSheetForKeyboard(){
+  const overlay = document.querySelector('.quick-record-overlay');
+  if(!overlay || !window.visualViewport) return;
+  const vv = window.visualViewport;
+  const keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  overlay.style.bottom = `${keyboardInset}px`;
+}
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize', adjustQuickSheetForKeyboard);
+  window.visualViewport.addEventListener('scroll', adjustQuickSheetForKeyboard);
 }
 
 async function init(){
