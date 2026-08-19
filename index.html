@@ -212,6 +212,13 @@
   .checkbox-row input[type="checkbox"]{
     width:17px; height:17px; accent-color:var(--accent); cursor:pointer;
   }
+  .row-checkbox{
+    flex:0 0 auto; width:30px; height:30px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .row-checkbox input[type="checkbox"]{
+    width:20px; height:20px; accent-color:var(--accent); cursor:pointer;
+  }
   label{ font-size:11px; color:var(--text-dim); display:block; margin-bottom:5px; letter-spacing:.02em; }
   .sign-toggle{ display:flex; gap:8px; margin-bottom:10px; }
   .sign-btn{
@@ -406,6 +413,10 @@ let digitRangeStart = null;
 let digitRangeEnd = null;
 let digitMachineFilter = '';
 let digitSortMode = 'recent';
+let selectionMode = false;
+let selectedRecordIds = new Set();
+let bulkDateEdit = false;
+let pendingBulkDelete = false;
 
 function getAdminPassword(){
   return localStorage.getItem(ADMIN_PW_KEY) || '';
@@ -1031,6 +1042,9 @@ function renderRecordsListView(main){
         <h2>記録一覧</h2>
         <span class="entry-count num">${entries.length}件</span>
       </div>
+      ${adminUnlocked ? `
+        <button class="ghost-btn" id="selectionModeToggle" style="width:100%;margin-bottom:12px;">${selectionMode ? '選択をやめる' : '複数選択してまとめて操作'}</button>
+      ` : ''}
       ${groupedEntries.length ? groupedEntries.map(g => `
         <div class="machine-group">
           <div class="machine-group-title">
@@ -1046,9 +1060,11 @@ function renderRecordsListView(main){
                 </div>
                 <div class="mid"></div>
                 <div class="diff num ${diffClass(r.diff)}">${fmtDiff(r.diff)}</div>
-                ${adminUnlocked
-                  ? `<div class="edit-btn" data-edit="${r.id}">✎</div><div class="del-btn" data-id="${r.id}">✕</div>`
-                  : `<div class="del-btn locked" title="管理者メニューでロックを解除してください">🔒</div>`}
+                ${adminUnlocked && selectionMode
+                  ? `<label class="row-checkbox"><input type="checkbox" class="bulk-check" data-id="${r.id}" ${selectedRecordIds.has(r.id) ? 'checked' : ''}></label>`
+                  : adminUnlocked
+                    ? `<div class="edit-btn" data-edit="${r.id}">✎</div><div class="del-btn" data-id="${r.id}">✕</div>`
+                    : `<div class="del-btn locked" title="管理者メニューでロックを解除してください">🔒</div>`}
               </div>
             `).join('')}
           </div>
@@ -1094,6 +1110,33 @@ function renderRecordsListView(main){
             <button class="add-entry-btn" id="editSaveBtn">保存する</button>
             <div class="icon-btn" id="editCancelBtn">✕</div>
           </div>
+        </div>
+      </div>
+    ` : ''}
+
+    ${selectionMode && selectedRecordIds.size > 0 ? `
+      <div class="quick-record-backdrop" id="bulkBackdrop"></div>
+      <div class="quick-record-overlay">
+        <div class="card quick-record-card">
+          <div class="qr-eyebrow">${selectedRecordIds.size}件選択中</div>
+          ${bulkDateEdit ? `
+            <div class="qr-title">日付をまとめて変更</div>
+            <div class="form-field">
+              <label for="bulkDateInput">変更後の日付</label>
+              <input type="date" id="bulkDateInput" value="${currentDate}">
+            </div>
+            <div class="qr-actions">
+              <button class="add-entry-btn" id="bulkDateApplyBtn">この日付に変更する</button>
+              <div class="icon-btn" id="bulkDateCancelBtn">✕</div>
+            </div>
+          ` : `
+            <div class="qr-title">選択した記録をどうしますか？</div>
+            <div class="qr-actions">
+              <button class="add-entry-btn" id="bulkDateBtn">日付を変更</button>
+              <div class="icon-btn" id="bulkClearBtn">✕</div>
+            </div>
+            <button class="add-entry-btn" id="bulkDeleteBtn" style="margin-top:8px;background:linear-gradient(180deg, var(--neg), #a8483d);">削除する</button>
+          `}
         </div>
       </div>
     ` : ''}
@@ -1235,7 +1278,90 @@ function bindRecordsListEvents(){
     };
   });
 
+  const selectionModeToggle = document.getElementById('selectionModeToggle');
+  if(selectionModeToggle){
+    selectionModeToggle.onclick = () => {
+      selectionMode = !selectionMode;
+      selectedRecordIds = new Set();
+      bulkDateEdit = false;
+      pendingBulkDelete = false;
+      renderMain();
+    };
+  }
+
+  document.querySelectorAll('.bulk-check').forEach(el => {
+    el.onchange = () => {
+      const id = el.dataset.id;
+      if(el.checked) selectedRecordIds.add(id); else selectedRecordIds.delete(id);
+      renderMain();
+    };
+  });
+
+  const bulkBackdrop = document.getElementById('bulkBackdrop');
+  if(bulkBackdrop) bulkBackdrop.onclick = clearBulkSelection;
+
+  const bulkClearBtn = document.getElementById('bulkClearBtn');
+  if(bulkClearBtn) bulkClearBtn.onclick = clearBulkSelection;
+
+  const bulkDateBtn = document.getElementById('bulkDateBtn');
+  if(bulkDateBtn) bulkDateBtn.onclick = () => { bulkDateEdit = true; renderMain(); };
+
+  const bulkDateCancelBtn = document.getElementById('bulkDateCancelBtn');
+  if(bulkDateCancelBtn) bulkDateCancelBtn.onclick = () => { bulkDateEdit = false; renderMain(); };
+
+  const bulkDateApplyBtn = document.getElementById('bulkDateApplyBtn');
+  if(bulkDateApplyBtn) bulkDateApplyBtn.onclick = handleBulkDateApply;
+
+  const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+  if(bulkDeleteBtn) bulkDeleteBtn.onclick = () => handleBulkDeleteClick(bulkDeleteBtn);
+
   adjustQuickSheetForKeyboard();
+}
+
+function clearBulkSelection(){
+  selectedRecordIds = new Set();
+  bulkDateEdit = false;
+  pendingBulkDelete = false;
+  renderMain();
+}
+
+async function handleBulkDateApply(){
+  const input = document.getElementById('bulkDateInput');
+  const val = input.value;
+  if(!val){
+    input.style.borderColor = 'var(--warn)';
+    setTimeout(() => { input.style.borderColor = ''; }, 700);
+    return;
+  }
+  state.records.forEach(r => {
+    if(selectedRecordIds.has(r.id)) r.date = val;
+  });
+  await save();
+  selectedRecordIds = new Set();
+  bulkDateEdit = false;
+  selectionMode = false;
+  renderMain();
+}
+
+function handleBulkDeleteClick(btn){
+  if(pendingBulkDelete){
+    const count = selectedRecordIds.size;
+    state.records = state.records.filter(r => !selectedRecordIds.has(r.id));
+    selectedRecordIds = new Set();
+    pendingBulkDelete = false;
+    selectionMode = false;
+    save();
+    renderMain();
+  }else{
+    pendingBulkDelete = true;
+    btn.textContent = `本当に削除しますか？（${selectedRecordIds.size}件）`;
+    setTimeout(() => {
+      if(pendingBulkDelete){
+        pendingBulkDelete = false;
+        renderMain();
+      }
+    }, 3000);
+  }
 }
 
 function openEditRecord(id){
