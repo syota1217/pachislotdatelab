@@ -1115,7 +1115,6 @@ function renderRecordsListView(main){
     ` : ''}
 
     ${selectionMode && selectedRecordIds.size > 0 ? `
-      <div class="quick-record-backdrop" id="bulkBackdrop"></div>
       <div class="quick-record-overlay">
         <div class="card quick-record-card">
           <div class="qr-eyebrow">${selectedRecordIds.size}件選択中</div>
@@ -1296,9 +1295,6 @@ function bindRecordsListEvents(){
       renderMain();
     };
   });
-
-  const bulkBackdrop = document.getElementById('bulkBackdrop');
-  if(bulkBackdrop) bulkBackdrop.onclick = clearBulkSelection;
 
   const bulkClearBtn = document.getElementById('bulkClearBtn');
   if(bulkClearBtn) bulkClearBtn.onclick = clearBulkSelection;
