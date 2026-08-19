@@ -261,6 +261,7 @@
     padding:14px 14px 12px; position:relative; overflow:hidden;
   }
   .machine-card .mname{ font-size:12.5px; font-weight:700; color:var(--text); margin-bottom:2px; word-break:break-all; }
+  .machine-card .rank-badge{ font-size:10px; color:var(--accent); font-weight:700; margin-bottom:3px; }
   .machine-card .mcount{ font-size:11px; color:var(--text-faint); margin-bottom:8px; }
   .machine-card .mavg{
     font-size:24px; font-weight:700; letter-spacing:.01em; line-height:1;
@@ -304,6 +305,13 @@
   }
   .del-btn.confirm{ background:var(--warn); border-color:var(--warn); color:#fff; font-size:10px; width:auto; padding:0 8px; }
   .del-btn.locked{ opacity:.45; cursor:default; }
+  .edit-btn{
+    flex:0 0 auto; width:30px; height:30px; border-radius:7px;
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text-faint);
+    font-size:13px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    transition:all .15s ease;
+  }
+  .edit-btn:active{ border-color:var(--accent-dim); color:var(--accent); }
 
   .empty{
     padding:28px 16px; text-align:center; color:var(--text-faint); font-size:12.5px;
@@ -388,6 +396,7 @@ let openHistory = false;
 let pendingDelete = null;
 let pendingUnitDelete = null;
 let quickTarget = null;
+let editTarget = null;
 let quickSign = 'plus';
 
 const ADMIN_PW_KEY = 'pachinko-admin-pw';
@@ -396,6 +405,7 @@ let digitScopeMode = 'day';
 let digitRangeStart = null;
 let digitRangeEnd = null;
 let digitMachineFilter = '';
+let digitSortMode = 'recent';
 
 function getAdminPassword(){
   return localStorage.getItem(ADMIN_PW_KEY) || '';
@@ -614,6 +624,10 @@ function digitScopeRecords(){
   let records;
   if(digitScopeMode === 'day'){
     records = dayRecords();
+  }else if(digitScopeMode === 'week'){
+    const end = todayStr();
+    const start = addDays(end, -6);
+    records = storeRecords().filter(r => r.date >= start && r.date <= end);
   }else{
     const a = digitRangeStart || todayStr();
     const b = digitRangeEnd || todayStr();
@@ -635,14 +649,33 @@ function computeDigitStats(records){
   });
   return Object.keys(groups)
     .map(Number)
-    .sort((a,b) => a - b)
     .map(digit => {
       const recs = groups[digit];
       const vals = recs.map(r => Math.abs(r.diff));
       const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
       const plusCount = recs.filter(r => r.diff > 0).length;
-      return { digit, count: recs.length, avg, plusCount };
-    });
+      const latest = Math.max(...recs.map(r => r.createdAt));
+      return { digit, count: recs.length, avg, plusCount, latest };
+    })
+    .sort((a,b) => b.latest - a.latest);
+}
+function computeUnitStats(records){
+  const groups = {};
+  records.forEach(r => {
+    if(r.unit === '' || r.unit == null) return;
+    if(!groups[r.unit]) groups[r.unit] = [];
+    groups[r.unit].push(r);
+  });
+  return Object.keys(groups)
+    .map(unit => {
+      const recs = groups[unit];
+      const vals = recs.map(r => Math.abs(r.diff));
+      const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
+      const plusCount = recs.filter(r => r.diff > 0).length;
+      const latestRec = recs.reduce((a,b) => (a.createdAt > b.createdAt ? a : b));
+      return { unit, machine: latestRec.machine, count: recs.length, avg, plusCount, latest: latestRec.createdAt };
+    })
+    .sort((a,b) => b.latest - a.latest);
 }
 
 function renderStoreSelect(){
@@ -887,7 +920,13 @@ function renderRecordsListView(main){
     return { name, avg, count: vals.length, max: Math.max(...vals), min: Math.min(...vals) };
   }).sort((a,b) => b.avg - a.avg);
 
-  const digitStats = computeDigitStats(digitScopeRecords());
+  const scopedRecords = digitScopeRecords();
+  const digitStats = computeDigitStats(scopedRecords);
+  const unitStats = computeUnitStats(scopedRecords);
+  if(digitSortMode === 'ranking'){
+    digitStats.sort((a,b) => b.avg - a.avg);
+    unitStats.sort((a,b) => b.avg - a.avg);
+  }
 
   const groupedEntries = groupSortEntries(entries);
 
@@ -927,9 +966,10 @@ function renderRecordsListView(main){
     </section>
 
     <section>
-      <h2>台番 一の位別データ</h2>
+      <h2>台番の期間集計</h2>
       <div class="scope-toggle">
         <button type="button" class="scope-btn ${digitScopeMode === 'day' ? 'active' : ''}" data-scope="day">当日</button>
+        <button type="button" class="scope-btn ${digitScopeMode === 'week' ? 'active' : ''}" data-scope="week">直近1週間</button>
         <button type="button" class="scope-btn ${digitScopeMode === 'range' ? 'active' : ''}" data-scope="range">期間指定</button>
       </div>
       ${digitScopeMode === 'range' ? `
@@ -951,13 +991,35 @@ function renderRecordsListView(main){
           ${machineList().map(m => `<option value="${escapeHtml(m)}" ${digitMachineFilter === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}
         </select>
       </div>
+      <div class="quick-label" style="margin-top:2px;">並び順</div>
+      <div class="scope-toggle" style="margin-bottom:6px;">
+        <button type="button" class="scope-btn ${digitSortMode === 'recent' ? 'active' : ''}" data-sort="recent">直近順</button>
+        <button type="button" class="scope-btn ${digitSortMode === 'ranking' ? 'active' : ''}" data-sort="ranking">平均が多い順（ランキング）</button>
+      </div>
+
+      <div class="quick-label" style="margin-top:6px;">一の位別</div>
       ${digitStats.length ? `
         <div class="summary-grid">
-          ${digitStats.map(d => `
+          ${digitStats.map((d, idx) => `
             <div class="machine-card">
+              ${digitSortMode === 'ranking' ? `<div class="rank-badge">${idx + 1}位</div>` : ''}
               <div class="mname">末尾 ${d.digit}</div>
               <div class="mcount">${d.count}件 ・ プラス${d.plusCount}件</div>
               <div class="mavg num amt">${fmtDiff(d.avg)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : `<div class="empty">対象期間に台番付きの記録がありません</div>`}
+
+      <div class="quick-label" style="margin-top:16px;">台番別</div>
+      ${unitStats.length ? `
+        <div class="summary-grid">
+          ${unitStats.map((u, idx) => `
+            <div class="machine-card">
+              ${digitSortMode === 'ranking' ? `<div class="rank-badge">${idx + 1}位</div>` : ''}
+              <div class="mname">台番 ${escapeHtml(u.unit)}</div>
+              <div class="mcount">${escapeHtml(u.machine)} ・ ${u.count}件 ・ プラス${u.plusCount}件</div>
+              <div class="mavg num amt">${fmtDiff(u.avg)}</div>
             </div>
           `).join('')}
         </div>
@@ -985,7 +1047,7 @@ function renderRecordsListView(main){
                 <div class="mid"></div>
                 <div class="diff num ${diffClass(r.diff)}">${fmtDiff(r.diff)}</div>
                 ${adminUnlocked
-                  ? `<div class="del-btn" data-id="${r.id}">✕</div>`
+                  ? `<div class="edit-btn" data-edit="${r.id}">✎</div><div class="del-btn" data-id="${r.id}">✕</div>`
                   : `<div class="del-btn locked" title="管理者メニューでロックを解除してください">🔒</div>`}
               </div>
             `).join('')}
@@ -1009,6 +1071,32 @@ function renderRecordsListView(main){
         }).join('')}
       </div>
     </section>
+
+    ${editTarget ? `
+      <div class="quick-record-backdrop" id="editBackdrop"></div>
+      <div class="quick-record-overlay">
+        <div class="card quick-record-card">
+          <div class="qr-eyebrow">記録を編集</div>
+          <div class="qr-title"><span class="qu">${escapeHtml(editTarget.unit || '-')}</span>${escapeHtml(editTarget.machine)}</div>
+          <div class="form-field">
+            <label for="editDateInput">記録日</label>
+            <input type="date" id="editDateInput" value="${editTarget.date}">
+          </div>
+          <div class="sign-toggle">
+            <button type="button" class="sign-btn edit-sign-btn plus ${editTarget.sign === 'plus' ? 'active' : ''}" data-sign="plus">＋ プラス</button>
+            <button type="button" class="sign-btn edit-sign-btn minus ${editTarget.sign === 'minus' ? 'active' : ''}" data-sign="minus">－ マイナス</button>
+          </div>
+          <div class="diff-input-wrap">
+            <input type="number" id="editAmountInput" class="${editTarget.sign === 'minus' ? 'neg' : 'pos'}" min="0" value="${editTarget.amount}" step="1">
+            <span class="suffix">枚</span>
+          </div>
+          <div class="qr-actions">
+            <button class="add-entry-btn" id="editSaveBtn">保存する</button>
+            <div class="icon-btn" id="editCancelBtn">✕</div>
+          </div>
+        </div>
+      </div>
+    ` : ''}
   `;
 
   bindRecordsListEvents();
@@ -1107,8 +1195,15 @@ function bindRecordsListEvents(){
     el.onclick = () => handleDeleteClick(el);
   });
 
-  document.querySelectorAll('.scope-btn').forEach(el => {
+  document.querySelectorAll('.edit-btn[data-edit]').forEach(el => {
+    el.onclick = () => openEditRecord(el.dataset.edit);
+  });
+
+  document.querySelectorAll('.scope-btn[data-scope]').forEach(el => {
     el.onclick = () => { digitScopeMode = el.dataset.scope; renderMain(); };
+  });
+  document.querySelectorAll('.scope-btn[data-sort]').forEach(el => {
+    el.onclick = () => { digitSortMode = el.dataset.sort; renderMain(); };
   });
 
   const rangeStartInput = document.getElementById('digitRangeStartInput');
@@ -1118,6 +1213,70 @@ function bindRecordsListEvents(){
 
   const digitMachineFilterSelect = document.getElementById('digitMachineFilterSelect');
   if(digitMachineFilterSelect) digitMachineFilterSelect.onchange = (e) => { digitMachineFilter = e.target.value; renderMain(); };
+
+  const editBackdrop = document.getElementById('editBackdrop');
+  if(editBackdrop) editBackdrop.onclick = () => { editTarget = null; renderMain(); };
+
+  const editCancelBtn = document.getElementById('editCancelBtn');
+  if(editCancelBtn) editCancelBtn.onclick = () => { editTarget = null; renderMain(); };
+
+  const editSaveBtn = document.getElementById('editSaveBtn');
+  if(editSaveBtn) editSaveBtn.onclick = handleEditSave;
+
+  document.querySelectorAll('.edit-sign-btn').forEach(el => {
+    el.onclick = () => {
+      editTarget.sign = el.dataset.sign;
+      document.querySelectorAll('.edit-sign-btn').forEach(b => b.classList.toggle('active', b.dataset.sign === editTarget.sign));
+      const amtInput = document.getElementById('editAmountInput');
+      if(amtInput){
+        amtInput.classList.remove('pos', 'neg');
+        amtInput.classList.add(editTarget.sign === 'minus' ? 'neg' : 'pos');
+      }
+    };
+  });
+
+  adjustQuickSheetForKeyboard();
+}
+
+function openEditRecord(id){
+  if(!adminUnlocked) return;
+  const rec = state.records.find(r => r.id === id);
+  if(!rec) return;
+  editTarget = {
+    id: rec.id,
+    unit: rec.unit,
+    machine: rec.machine,
+    date: rec.date,
+    sign: rec.diff >= 0 ? 'plus' : 'minus',
+    amount: Math.abs(rec.diff)
+  };
+  renderMain();
+}
+
+async function handleEditSave(){
+  const dateInput = document.getElementById('editDateInput');
+  const amountInput = document.getElementById('editAmountInput');
+  const dateVal = dateInput.value;
+  const amtRaw = amountInput.value.trim();
+
+  if(!dateVal || amtRaw === ''){
+    [dateInput, amountInput].forEach(el => {
+      el.style.borderColor = 'var(--warn)';
+      setTimeout(() => { el.style.borderColor = ''; }, 700);
+    });
+    return;
+  }
+  const magnitude = Math.abs(Number(amtRaw));
+  if(Number.isNaN(magnitude)) return;
+
+  const rec = state.records.find(r => r.id === editTarget.id);
+  if(rec){
+    rec.date = dateVal;
+    rec.diff = editTarget.sign === 'minus' ? -magnitude : magnitude;
+    await save();
+  }
+  editTarget = null;
+  renderMain();
 }
 
 async function handleRegisterUnit(){
